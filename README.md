@@ -2,41 +2,30 @@
 
 ## Overview
 
-This project demonstrates how to harden monitoring for a containerized Django application running in Kubernetes. The original deployment included incomplete Prometheus monitoring and exposed sensitive data through unsafe metrics. I refactored the monitoring logic, removed sensitive telemetry, added a meaningful application metric, and deployed Prometheus so the Kubernetes cluster could collect and analyze runtime data.
+This project demonstrates how to secure and operationalize monitoring for a containerized Django application deployed on Kubernetes. The application originally included incomplete Prometheus monitoring and unsafe telemetry that could expose sensitive information. I hardened the monitoring implementation, added a meaningful application metric, deployed Prometheus, and organized the Kubernetes security artifacts into a cleaner project structure.
 
-The project combines application security, Kubernetes deployment, secret management, and observability practices in a realistic DevSecOps workflow.
+The project focuses on DevSecOps practices across application security, Kubernetes deployment, secret management, and observability.
 
-## Problem
+## Security Problem
 
-The original application had three major issues:
+The original deployment had several security and reliability issues:
 
-1. Sensitive values were being exposed through application monitoring.
-2. The application had Prometheus client instrumentation, but the monitoring data was not being collected by a Prometheus service.
-3. The Kubernetes deployment needed better configuration for secure and useful observability.
-
-This created a common security and operations problem: metrics existed, but they were both unsafe and incomplete. Monitoring should help detect problems, not leak secrets.
+* Sensitive values were at risk of being exposed through application monitoring.
+* The application had Prometheus instrumentation, but Prometheus was not fully deployed to collect the metrics.
+* Runtime secrets needed to be separated from normal Kubernetes configuration.
+* Monitoring needed to provide useful operational signals without leaking confidential data.
 
 ## What I Implemented
 
-### Removed Sensitive Metrics
+### Secure Application Metrics
 
-I reviewed the Django application monitoring code in:
+Unsafe monitoring logic was removed from the Django application so that secrets would not be exposed through the metrics endpoint.
 
-```text
-GiftcardSite/LegacySite/views.py
-```
-
-Unsafe monitoring related to secrets was removed so sensitive values would not be exposed through the metrics endpoint.
-
-### Added Safer Application Monitoring
-
-I added a Prometheus counter named:
+A Prometheus counter was added to track intentional database-related 404 responses:
 
 ```text
 database_error_return_404
 ```
-
-This counter tracks cases where the application intentionally returns a 404 response because of a database-related error.
 
 In Prometheus, this counter appears as:
 
@@ -44,11 +33,13 @@ In Prometheus, this counter appears as:
 database_error_return_404_total
 ```
 
-This is useful because it gives visibility into backend database failures that are being surfaced to users as 404 responses.
+This metric helps identify cases where backend database problems are being surfaced to users as 404 responses.
 
-### Deployed Prometheus in Kubernetes
+### Prometheus Deployment
 
-I added Kubernetes YAML files to deploy and configure Prometheus:
+Prometheus was deployed into the Kubernetes environment using YAML configuration files. The monitoring setup allows Prometheus to scrape application metrics and make them available for inspection through the Prometheus UI.
+
+Prometheus-related files include:
 
 ```text
 prometheus.yaml
@@ -56,28 +47,38 @@ prometheus-deployment.yaml
 prometheus-service.yaml
 ```
 
-These files configure Prometheus to run inside the Kubernetes cluster and scrape application metrics.
+### Secret Management
 
-### Preserved Secret Hardening from the Previous Module
+Plaintext secrets were removed from normal Kubernetes deployment files and replaced with a sealed secret workflow.
 
-The project also includes the sealed Kubernetes secret file:
+The sealed secret artifact is stored here:
 
 ```text
-module2.yaml
+k8/secrets/sealed-django-secret.yaml
 ```
 
-The raw unsealed secret file is intentionally excluded from the repository. This keeps sensitive values out of source control while still allowing the Kubernetes deployment to use secrets at runtime.
+The raw unsealed secret file is intentionally excluded from the repository:
+
+```text
+django-secret-raw.yaml
+```
+
+Additional notes about the secret management design are available in:
+
+```text
+docs/secret-management.md
+```
 
 ## Technologies Used
 
 * Python
 * Django
-* Prometheus Python Client
-* Prometheus
-* Kubernetes
 * Docker
+* Kubernetes
 * Minikube
 * kubectl
+* Prometheus
+* Prometheus Python Client
 * Kubernetes ConfigMaps
 * Kubernetes Sealed Secrets
 * GitHub Actions
@@ -87,34 +88,34 @@ The raw unsealed secret file is intentionally excluded from the repository. This
 ```text
 .
 ├── .github/workflows/          # GitHub Actions workflow files
-├── GiftcardSite/               # Django application
+├── GiftcardSite/               # Django application source code
+├── assets/                     # Supporting project assets
 ├── db/                         # Database container and Kubernetes files
-├── proxy/                      # Reverse proxy container and Kubernetes files
-├── scripts/                    # Supporting scripts
-├── module2.yaml                # Sealed Kubernetes secret
+├── docs/                       # Project documentation
+│   └── secret-management.md    # Secret management notes
+├── k8/                         # Additional Kubernetes security artifacts
+│   └── secrets/
+│       └── sealed-django-secret.yaml
+├── proxy/                      # Reverse proxy configuration
+├── scripts/                    # Setup and helper scripts
 ├── prometheus.yaml             # Prometheus configuration
 ├── prometheus-deployment.yaml  # Prometheus Kubernetes deployment
 ├── prometheus-service.yaml     # Prometheus Kubernetes service
 ├── Dockerfile                  # Django application container build file
 ├── requirements.txt            # Python dependencies
-└── README.md                   # Project documentation
+└── setup.sh                    # Environment setup script
 ```
 
 ## Security Improvements
 
 This project improves the deployment by:
 
-* Removing sensitive values from monitoring output.
-* Avoiding plaintext secret exposure in the public repository.
-* Using sealed Kubernetes secrets for protected runtime configuration.
-* Adding focused Prometheus monitoring for database-related application errors.
-* Deploying a working Prometheus service to collect and visualize metrics.
-
-## Why This Matters
-
-Monitoring systems are often trusted by default, but they can become a security risk if they expose secrets, tokens, passwords, or sensitive business logic. Secure observability requires collecting useful operational data without leaking confidential information.
-
-This project shows how to apply that principle in a Kubernetes environment by replacing unsafe telemetry with meaningful, low-risk metrics.
+* Removing sensitive telemetry from application monitoring.
+* Adding focused Prometheus metrics for database-related errors.
+* Deploying Prometheus so metrics are actually collected.
+* Moving secret handling into a Kubernetes sealed secret workflow.
+* Keeping raw secrets out of source control.
+* Organizing security documentation under `docs/`.
 
 ## Example Commands
 
@@ -124,7 +125,7 @@ Start Minikube:
 minikube start
 ```
 
-Build the application images:
+Build the Docker images:
 
 ```bash
 docker build -t nyuappsec/assign3:v0 .
@@ -132,13 +133,23 @@ docker build -t nyuappsec/assign3-proxy:v0 proxy/
 docker build -t nyuappsec/assign3-db:v0 db/
 ```
 
-Apply the Kubernetes resources:
+Apply the sealed secret:
 
 ```bash
-kubectl apply -f module2.yaml
+kubectl apply -f k8/secrets/sealed-django-secret.yaml
+```
+
+Apply the application resources:
+
+```bash
 kubectl apply -f db/k8
 kubectl apply -f GiftcardSite/k8
 kubectl apply -f proxy/k8
+```
+
+Apply the Prometheus resources:
+
+```bash
 kubectl apply -f prometheus.yaml
 kubectl apply -f prometheus-deployment.yaml
 kubectl apply -f prometheus-service.yaml
@@ -163,22 +174,23 @@ Open Prometheus:
 minikube service prometheus-server
 ```
 
-## Useful Metrics to Consider
+## Monitoring Value
 
-In addition to the implemented `database_error_return_404` counter, other valuable metrics for this type of application could include:
+The implemented metric helps identify database-related failures that are being returned to users as 404 responses. This provides a useful operational signal because repeated increases in this counter could indicate backend instability, database connectivity problems, broken queries, or error-handling paths that need review.
 
-### Failed Login Attempts
+Other useful metrics for this type of application could include:
 
-A counter for failed login attempts could help detect brute-force attacks, credential stuffing, or account takeover attempts.
-
-### Gift Card Redemption Errors
-
-A counter for gift card redemption failures could help identify fraud attempts, validation issues, database problems, or broken transaction logic.
+* Failed login attempts
+* Gift card redemption errors
+* Request latency
+* HTTP 5xx response counts
+* Database connection failures
 
 ## Lessons Learned
 
 * Monitoring should never expose secrets.
-* Metrics should be intentionally designed around useful operational and security signals.
-* A `/metrics` endpoint is not enough; a Prometheus service must collect and process the data.
-* Kubernetes ConfigMaps are useful for Prometheus scrape configuration.
-* Sealed Secrets help keep sensitive deployment values out of public source control.
+* Metrics should be designed around useful security and reliability signals.
+* A metrics endpoint is not enough; Prometheus must be deployed and configured to scrape it.
+* Kubernetes ConfigMaps are useful for Prometheus configuration.
+* Kubernetes Sealed Secrets help keep sensitive runtime values out of public source control.
+* Project structure matters when presenting security work in a portfolio.
